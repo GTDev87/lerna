@@ -6,6 +6,7 @@ import semver from "semver";
 import async from "async";
 import find from "lodash.find";
 import path from "path";
+import fs from "fs";
 
 export default class BootstrapCommand extends Command {
   initialize(callback) {
@@ -49,7 +50,19 @@ export default class BootstrapCommand extends Command {
 
       // Get all packages that have no remaining dependencies within the repo
       // that haven't yet been bootstrapped.
+
+
       const batch = todoPackages.filter(pkg => {
+        const matchingDep = this.packages.find((dependency) => this.hasMatchingDependency(pkg, dependency, true));
+
+        if (matchingDep){
+          const localFileDep = "file:" + matchingDep.location;
+
+          if(pkg._package.dependencies     && this.hasMatchingVersion(pkg._package.dependencies, matchingDep))     { pkg._package.dependencies[matchingDep.name] = localFileDep; }
+          if(pkg._package.devDependencies  && this.hasMatchingVersion(pkg._package.devDependencies, matchingDep))  { pkg._package.devDependencies[matchingDep.name] = localFileDep; }
+          if(pkg._package.peerDependencies && this.hasMatchingVersion(pkg._package.peerDependencies, matchingDep)) { pkg._package.peerDependencies[matchingDep.name] = localFileDep; }
+        }
+
         const node = filteredGraph.get(pkg.name);
         return !node.dependencies.filter(dep => !donePackages[dep]).length;
       });
@@ -90,16 +103,20 @@ export default class BootstrapCommand extends Command {
 
   linkDependenciesForPackage(pkg, callback) {
     async.each(this.packages, (dependency, done) => {
-      if (!this.hasMatchingDependency(pkg, dependency, true)) return done();
 
       const linkSrc = dependency.location;
       const linkDest = path.join(pkg.nodeModulesLocation, dependency.name);
 
-      this.createLinkedDependency(linkSrc, linkDest, dependency.name, done);
+      const packagePath = path.join(linkDest, "package.json");
+
+      fs.readFile(packagePath, "utf-8", (err, packageJson) => {
+        this.createLinkedDependency(linkSrc, linkDest, dependency.name, packageJson, done)
+      });
+
     }, callback);
   }
 
-  createLinkedDependency(src, dest, name, callback) {
+  createLinkedDependency(src, dest, name, packageJson, callback) {
     FileSystemUtilities.rimraf(dest, err => {
       if (err) {
         return callback(err);
@@ -110,21 +127,17 @@ export default class BootstrapCommand extends Command {
           return callback(err);
         }
 
-        this.createLinkedDependencyFiles(src, dest, name, callback);
+        this.createLinkedDependencyFiles(src, dest, name, packageJson, callback);
       });
     });
   }
 
-  createLinkedDependencyFiles(src, dest, name, callback) {
+  createLinkedDependencyFiles(src, dest, name, packageJson, callback) {
     const srcPackageJsonLocation = path.join(src, "package.json");
     const destPackageJsonLocation = path.join(dest, "package.json");
     const destIndexJsLocation = path.join(dest, "index.js");
 
-    const packageJsonFileContents = JSON.stringify({
-      name: name,
-      version: require(srcPackageJsonLocation).version
-    }, null, "  ");
-
+    const packageJsonFileContents = packageJson;
     const prefix = this.repository.linkedFiles.prefix || "";
     const indexJsFileContents = prefix + "module.exports = require(" + JSON.stringify(src) + ");";
 
@@ -162,8 +175,9 @@ export default class BootstrapCommand extends Command {
     }
   }
 
-  hasMatchingDependency(pkg, dependency, showWarning = false) {
-    const expectedVersion = pkg.allDependencies[dependency.name];
+  hasMatchingVersion(pkgDependencies, dependency) {
+    const expectedVersion = pkgDependencies[dependency.name];
+
     const actualVersion = dependency.version;
 
     if (!expectedVersion) {
@@ -174,15 +188,26 @@ export default class BootstrapCommand extends Command {
       return true;
     }
 
-    if (showWarning) {
+    return false;
+  }
+
+  hasMatchingDependency(pkg, dependency, showWarning = false) {
+    const expectedVersion = pkg.allDependencies[dependency.name];
+    const actualVersion = dependency.version;
+
+    const hasDependency = this.hasMatchingVersion(pkg.allDependencies, dependency);
+
+    if(dependency.version && !hasDependency && showWarning) {
       this.logger.warning(
         `Version mismatch inside "${pkg.name}". ` +
         `Depends on "${dependency.name}@${expectedVersion}" ` +
         `instead of "${dependency.name}@${actualVersion}".`
       );
+
+      return false;
     }
 
-    return false;
+    return hasDependency;
   }
 
   hasDependencyInstalled(pkg, dependency) {
