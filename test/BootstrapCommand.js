@@ -86,6 +86,7 @@ describe("BootstrapCommand", () => {
       assertStubbedCalls([
         [ChildProcessUtilities, "spawn", { nodeCallback: true }, [
           { args: ["npm", ["install", "package-2@file:" + path.join(testDir, "packages/package-2")], { cwd: path.join(testDir, "packages/package-3"), stdio: STDIO_OPT }] },
+          { args: ["npm", ["install", "package-1@^0.0.0"], { cwd: path.join(testDir, "packages/package-4"), stdio: STDIO_OPT }] }
         ]]
       ]);
 
