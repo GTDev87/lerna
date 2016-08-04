@@ -2,6 +2,7 @@ import FileSystemUtilities from "../FileSystemUtilities";
 import NpmUtilities from "../NpmUtilities";
 import PackageUtilities from "../PackageUtilities";
 import Command from "../Command";
+import objectAssign from "object-assign";
 import semver from "semver";
 import async from "async";
 import find from "lodash.find";
@@ -68,6 +69,7 @@ export default class BootstrapCommand extends Command {
         async.series([
           cb => FileSystemUtilities.mkdirp(pkg.nodeModulesLocation, cb),
           cb => this.installExternalPackages(pkg, cb),
+          cb => this.linkDependenciesForPackage(pkg, cb),
           cb => this.runPrepublishForPackage(pkg, cb),
         ], err => {
           this.progressBar.tick(pkg.name);
@@ -97,47 +99,34 @@ export default class BootstrapCommand extends Command {
     }
   }
 
-  // linkDependenciesForPackage(pkg, callback) {
-  //   async.each(this.packages, (dependency, done) => {
-  //     if (!this.hasMatchingDependency(pkg, dependency, true)) return done();
+  linkDependenciesForPackage(pkg, callback) {
+    async.each(this.packages, (dependency, done) => {
+      if (!this.hasMatchingDependency(pkg, dependency, true)) return done();
 
-  //     const linkSrc = dependency.location;
-  //     const linkDest = path.join(pkg.nodeModulesLocation, dependency.name);
+      const linkSrc = dependency.location;
+      const linkDest = path.join(pkg.nodeModulesLocation, dependency.name);
 
-  //     this.createLinkedDependency(linkSrc, linkDest, dependency.name, done);
-  //   }, callback);
-  // }
-
-  // createLinkedDependency(src, dest, name, callback) {
-  //   FileSystemUtilities.rimraf(dest, err => {
-  //     if (err) {
-  //       return callback(err);
-  //     }
-
-  //     FileSystemUtilities.mkdirp(dest, err => {
-  //       if (err) {
-  //         return callback(err);
-  //       }
-
-  //       this.createLinkedDependencyFiles(src, dest, name, callback);
-  //     });
-  //   });
-  // }
+      this.createLinkedDependencyFiles(linkSrc, linkDest, dependency.name, done);
+    }, callback);
+  }
 
   createLinkedDependencyFiles(src, dest, name, callback) {
     const srcPackageJsonLocation = path.join(src, "package.json");
     const destPackageJsonLocation = path.join(dest, "package.json");
     const destIndexJsLocation = path.join(dest, "index.js");
 
-    const packageJsonFileContents = JSON.stringify({
+    const packageJsonFileContents = objectAssign({
       name: name,
-      version: require(srcPackageJsonLocation).version
-    }, null, "  ");
+      version: require(srcPackageJsonLocation).version,
+      main: "./index.js"
+    }, JSON.parse(FileSystemUtilities.readFileSync(srcPackageJsonLocation)));
+
+    const packageJsonFileContentsStr = JSON.stringify(packageJsonFileContents, null, "  ");
 
     const prefix = this.repository.linkedFiles.prefix || "";
     const indexJsFileContents = prefix + "module.exports = require(" + JSON.stringify(src) + ");";
 
-    FileSystemUtilities.writeFile(destPackageJsonLocation, packageJsonFileContents, err => {
+    FileSystemUtilities.writeFile(destPackageJsonLocation, packageJsonFileContentsStr, err => {
       if (err) {
         return callback(err);
       }
