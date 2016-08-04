@@ -8,6 +8,8 @@ import async from "async";
 import find from "lodash.find";
 import path from "path";
 
+const lernaIndex = "lerna.index.js";
+
 export default class BootstrapCommand extends Command {
   initialize(callback) {
     // Nothing to do...
@@ -99,9 +101,14 @@ export default class BootstrapCommand extends Command {
     }
   }
 
+  hasMatchingChangedDependency(pkg, dependency) {
+    const inspectedDep = pkg.allDependencies[dependency.name];
+    return inspectedDep && inspectedDep.indexOf("file:") === 0;
+  }
+
   linkDependenciesForPackage(pkg, callback) {
     async.each(this.packages, (dependency, done) => {
-      if (!this.hasMatchingDependency(pkg, dependency, true)) return done();
+      if (!this.hasMatchingChangedDependency(pkg, dependency)) return done();
 
       const linkSrc = dependency.location;
       const linkDest = path.join(pkg.nodeModulesLocation, dependency.name);
@@ -111,22 +118,23 @@ export default class BootstrapCommand extends Command {
   }
 
   createLinkedDependencyFiles(src, dest, name, callback) {
-    const srcPackageJsonLocation = path.join(src, "package.json");
     const destPackageJsonLocation = path.join(dest, "package.json");
-    const destIndexJsLocation = path.join(dest, "index.js");
+    const destIndexJsLocation = path.join(dest, lernaIndex);
 
-    const srcPackageJson = require(srcPackageJsonLocation);
+    const srcPackageJson = require(destPackageJsonLocation);
+    console.log("srcPackageJson = %j", srcPackageJson);
 
-    const packageJsonFileContents = objectAssign({
-      name: name,
-      version: srcPackageJson.version,
-      main: "./index.js"
-    }, JSON.parse(FileSystemUtilities.readFileSync(srcPackageJsonLocation)));
+    const packageJsonFileContents = objectAssign(
+      JSON.parse(FileSystemUtilities.readFileSync(destPackageJsonLocation)),
+      {
+        name: name,
+        version: srcPackageJson.version,
+        main: "./" + lernaIndex
+      });
 
     const packageJsonFileContentsStr = JSON.stringify(packageJsonFileContents, null, "  ");
-
     const prefix = this.repository.linkedFiles.prefix || "";
-    const indexJsFileContents = prefix + "module.exports = require(" + JSON.stringify(src) + "/" + srcPackageJson.main + ");";
+    const indexJsFileContents = prefix + "module.exports = require(\"" + src + "/" + srcPackageJson.main + "\");";
 
     FileSystemUtilities.writeFile(destPackageJsonLocation, packageJsonFileContentsStr, err => {
       if (err) {
